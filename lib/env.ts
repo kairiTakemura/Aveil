@@ -1,0 +1,7 @@
+export const env = {
+  CRON_SECRET: process.env.CRON_SECRET!,
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY!,
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY!,
+  SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+};
