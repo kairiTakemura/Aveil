@@ -1,0 +1,80 @@
+name: weekly-fashion-trend-pipeline
+
+on:
+  schedule:
+    - cron: "0 22 * * 0" # JST 月曜07:00
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "full | collect | normalize | analyze | generate | revalidate"
+        required: true
+        default: "full"
+
+concurrency:
+  group: weekly-fashion-trend-pipeline
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE_URL: ${{ secrets.INTERNAL_API_BASE_URL }}
+      TOKEN: ${{ secrets.CRON_SECRET }}
+
+    steps:
+      - name: Validate env
+        run: |
+          test -n "$BASE_URL" || (echo "Missing BASE_URL" && exit 1)
+          test -n "$TOKEN" || (echo "Missing TOKEN" && exit 1)
+
+      - name: Define helper
+        run: |
+          cat << 'EOF' > call_api.sh
+          #!/usr/bin/env bash
+          set -euo pipefail
+          URL="$1"
+          for i in 1 2 3; do
+            echo "Attempt $i -> $URL"
+            STATUS=$(curl -sS -o response.json -w "%{http_code}" -X POST "$URL" \
+              -H "Authorization: Bearer ${TOKEN}" \
+              -H "Content-Type: application/json")
+            cat response.json || true
+            if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 300 ]; then
+              exit 0
+            fi
+            sleep $((i*2))
+          done
+          echo "Failed: $URL"
+          exit 1
+          EOF
+          chmod +x call_api.sh
+
+      - name: Full pipeline
+        if: ${{ github.event_name == 'schedule' || github.event.inputs.mode == 'full' }}
+        run: |
+          ./call_api.sh "${BASE_URL}/api/internal/collect"
+          ./call_api.sh "${BASE_URL}/api/internal/normalize"
+          ./call_api.sh "${BASE_URL}/api/internal/analyze"
+          ./call_api.sh "${BASE_URL}/api/internal/generate-images"
+          ./call_api.sh "${BASE_URL}/api/internal/revalidate"
+
+      - name: Collect only
+        if: ${{ github.event.inputs.mode == 'collect' }}
+        run: ./call_api.sh "${BASE_URL}/api/internal/collect"
+
+      - name: Normalize only
+        if: ${{ github.event.inputs.mode == 'normalize' }}
+        run: ./call_api.sh "${BASE_URL}/api/internal/normalize"
+
+      - name: Analyze only
+        if: ${{ github.event.inputs.mode == 'analyze' }}
+        run: ./call_api.sh "${BASE_URL}/api/internal/analyze"
+
+      - name: Generate only
+        if: ${{ github.event.inputs.mode == 'generate' }}
+        run: ./call_api.sh "${BASE_URL}/api/internal/generate-images"
+
+      - name: Revalidate only
+        if: ${{ github.event.inputs.mode == 'revalidate' }}
+        run: ./call_api.sh "${BASE_URL}/api/internal/revalidate"
