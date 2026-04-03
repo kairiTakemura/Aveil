@@ -8,15 +8,15 @@ const USER_AGENT = 'AveilTrendBot/1.0 (+contact: admin@example.com)'
 export const maxDuration = 30
 
 const REQUEST_INTERVAL_MS = 300
-const REQUEST_TIMEOUT_MS = 4000
-const MAX_RETRY = 1
+const REQUEST_TIMEOUT_MS = 8000
+const MAX_RETRY = 2
 const MAX_LINKS_PER_RUN = 5
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function fetchWithRetry(url: string): Promise<string> {
+async function fetchWithRetry(url: string, stage: 'robots' | 'target'): Promise<string> {
   let lastError: unknown
 
   for (let i = 0; i <= MAX_RETRY; i++) {
@@ -33,7 +33,7 @@ async function fetchWithRetry(url: string): Promise<string> {
       })
 
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status} at ${url}`)
+        throw new Error(`[${stage}] HTTP ${res.status} at ${url}`)
       }
 
       const text = await res.text()
@@ -43,12 +43,13 @@ async function fetchWithRetry(url: string): Promise<string> {
       clearTimeout(timeout)
       lastError = error
       if (i < MAX_RETRY) {
-        await sleep(1500 * (i + 1))
+        await sleep(1200 * (i + 1))
       }
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error('fetch failed')
+  const reason = lastError instanceof Error ? lastError.message : 'unknown_error'
+  throw new Error(`[${stage}] fetch failed after retries: ${reason}`)
 }
 
 function isAllowedByRobots(robotsTxt: string, targetPath: string) {
@@ -129,7 +130,7 @@ export async function POST(req: Request) {
 
     // 1) robots.txt チェック
     const robotsUrl = `${target.origin}/robots.txt`
-    const robotsTxt = await fetchWithRetry(robotsUrl)
+    const robotsTxt = await fetchWithRetry(robotsUrl, 'robots')
     const allowed = isAllowedByRobots(robotsTxt, target.pathname)
 
     if (!allowed) {
@@ -141,7 +142,7 @@ export async function POST(req: Request) {
     }
 
     // 2) 一覧ページ取得
-    const html = await fetchWithRetry(targetUrl)
+    const html = await fetchWithRetry(targetUrl, 'target')
     const links = extractCandidateLinks(html, target.origin)
 
     let inserted = 0
@@ -178,8 +179,18 @@ export async function POST(req: Request) {
     return Response.json({ ok: true, jobId: run.id, linksFound: links.length, upserted: inserted })
   } catch (e) {
     if (runId) {
+      const errorMessage = (e as Error).message
+      const stage = errorMessage.includes('[robots]')
+        ? 'robots'
+        : errorMessage.includes('[target]')
+          ? 'target'
+          : 'unknown'
+
       try {
-        await finishJob(runId, false, `collect failed: ${(e as Error).message}`, { targetUrl })
+        await finishJob(runId, false, `collect failed: ${errorMessage}`, {
+          targetUrl,
+          errorStage: stage,
+        })
       } catch {
         // noop
       }
