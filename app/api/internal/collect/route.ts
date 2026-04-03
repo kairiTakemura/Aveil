@@ -5,9 +5,12 @@ import { getSupabaseAdmin } from '@/lib/supabase/admin'
 
 const DEFAULT_TARGET_URL = 'https://www.shop-shimamura.com/disp/recommend/?size=1'
 const USER_AGENT = 'AveilTrendBot/1.0 (+contact: admin@example.com)'
-const REQUEST_INTERVAL_MS = 2500
-const REQUEST_TIMEOUT_MS = 10000
-const MAX_RETRY = 2
+export const maxDuration = 30
+
+const REQUEST_INTERVAL_MS = 300
+const REQUEST_TIMEOUT_MS = 4000
+const MAX_RETRY = 1
+const MAX_LINKS_PER_RUN = 5
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -93,7 +96,7 @@ function extractCandidateLinks(html: string, base: string) {
     (u) => u.includes('/disp/item/') || u.includes('/disp/coord/') || u.includes('/disp/recommend/')
   )
 
-  return (prioritized.length > 0 ? prioritized : sameHost).slice(0, 30)
+  return (prioritized.length > 0 ? prioritized : sameHost).slice(0, MAX_LINKS_PER_RUN)
 }
 
 function toSourceProductId(productUrl: string) {
@@ -109,14 +112,19 @@ function toSourceProductId(productUrl: string) {
 }
 
 export async function POST(req: Request) {
+  let runId: string | null = null
+  let targetUrl = DEFAULT_TARGET_URL
+
   try {
     assertInternalAuth(req)
 
     const body = (await req.json().catch(() => ({}))) as { targetUrl?: string }
-    const targetUrl = body.targetUrl || DEFAULT_TARGET_URL
+    targetUrl = body.targetUrl || DEFAULT_TARGET_URL
     const target = new URL(targetUrl)
 
     const run = await startJob('collect', `collect-${new Date().toISOString().slice(0, 10)}`)
+    runId = run.id
+
     const supabaseAdmin = getSupabaseAdmin()
 
     // 1) robots.txt チェック
@@ -169,6 +177,13 @@ export async function POST(req: Request) {
 
     return Response.json({ ok: true, jobId: run.id, linksFound: links.length, upserted: inserted })
   } catch (e) {
+    if (runId) {
+      try {
+        await finishJob(runId, false, `collect failed: ${(e as Error).message}`, { targetUrl })
+      } catch {
+        // noop
+      }
+    }
     return Response.json({ ok: false, error: (e as Error).message }, { status: 500 })
   }
 }
