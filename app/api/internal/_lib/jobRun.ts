@@ -1,6 +1,7 @@
-import { supabaseAdmin } from '@/lib/supabase/admin'
+import { getSupabaseAdmin } from '@/lib/supabase/admin'
 
 export async function startJob(jobType: string, idempotencyKey?: string) {
+  const supabaseAdmin = getSupabaseAdmin()
   const { data, error } = await supabaseAdmin
     .from('job_runs')
     .insert({ job_type: jobType, status: 'running', idempotency_key: idempotencyKey ?? null })
@@ -11,6 +12,7 @@ export async function startJob(jobType: string, idempotencyKey?: string) {
 }
 
 export async function finishJob(id: string, ok: boolean, message?: string, meta?: Record<string, unknown>) {
+  const supabaseAdmin = getSupabaseAdmin()
   const { error } = await supabaseAdmin
     .from('job_runs')
     .update({
